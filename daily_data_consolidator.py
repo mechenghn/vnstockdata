@@ -17,22 +17,34 @@
 #v1.3
 #- auto update tracker header when the tracking list changes
 #- collect foreign data
+#v1.4 
+# -plot historic data of tickers using 'plot' argument
 
+
+#Run format
+#python3.9 daily_data_consolidater.py -arg1 -arg2
+# - arg1 == null >> Collect daily data
+# - arg1 == plot >> Plot data
+# - arg2: specific ticker to plot historic data
 
 DATA_FOLDER = 'consolidated_data/'
 DATA_FOLDER_NN = 'consolidated_data_nn/'
 TRACKING_TICKERS = 'tracking_tickers'
-VOLUME_TRACKER = '0_Tracking_Volume.csv'
-VALUE_TRACKER = '0_Tracking_Value.csv'
+VOLUME_TRACKER = '0_Tracking_Volume'
+VALUE_TRACKER = '0_Tracking_Value'
+NO_OF_PLOTTING_TICKERS = 10
 
 import json
 from datetime import datetime
 from shutil import copyfile
 import requests
 import os
+import sys
 from dataclasses import dataclass
 import operator
 import matplotlib.pyplot as plt
+import csv
+import glob
 
 @dataclass
 class ticker_info:
@@ -56,32 +68,48 @@ def plotbarchart(tickers, ticker_att, chart_title):
 	height = []
 	tick_label = []
 	count = 1
+	ymin = 0.0
+	ymax = 1500.0
 	#chart_title = 'default'
 	for tk in tickers:
 		left.append(count)
 		if (ticker_att == 'volume'):
-			height.append(tk.NetVolume)
-			#chart_title = 'Net Buy Volume'
+			height.append(tk.NetVolume/1e3)
+			if (ymin > float(tk.NetVolume/1e3)):
+				ymin = float(tk.NetVolume/1e3) * 0.5
 		else:
-			height.append(tk.NetValue)
-			#chart_title = 'Net Buy Value'
+			height.append(tk.NetValue/1e3)
+			if (ymin > float(tk.NetValue/1e3)):
+				ymin = float(tk.NetValue/1e3) * 0.5
 		tick_label.append(tk.name)
-		count = count +1
-	 
+		count = count + 1
+
 	# plotting a bar chart
 	plt.bar(left, height, tick_label = tick_label,
 	        width = 0.5, color = ['red', 'green'])
-	 
+	
+	#indicate number on top of each bar
+	for index,data in enumerate(height):
+		plt.text(x=index + 0.7, y = data + 3, s=f"{round(data)}" , fontdict=dict(fontsize=10)) 
+
 	# naming the x-axis
 	plt.xlabel('')
-	plt.xticks(rotation = 90) # Rotates X-Axis Ticks by 45-degrees
+	plt.xticks(rotation = 60) # Rotates X-Axis Ticks by 45-degrees
 	# naming the y-axis
-	plt.ylabel('million Đ')
+	if (ticker_att == 'volume'):
+		plt.ylabel('mln')
+	else:
+		plt.ylabel('bln VND')
 	# plot title
 	plt.title(chart_title)
 
+	axes = plt.gca()
+	#axes.set_xlim([xmin,xmax])
+	#axes.set_ylim([ymin,ymax])
+
 	# function to show the plot
 	plt.show()
+
 
 def exploretradeticker(element):
 	ticker = element['ticker']
@@ -153,35 +181,6 @@ def processdailydata(inputdata, outputfile, NN = False):
 	d = json.load(f)
 	input_data = d["items"][0]
 
-	#process today data
-	data = input_data['today']	
-	file = outputfile + datetime.now().strftime("%Y%m%d") + '_today.csv'
-	if (NN==False):
-		consolidatedata(data,file)
-	else:
-		consolidatedataNN(data,file)
-	# 5 day data
-	data = input_data['oneWeek']	
-	file = outputfile + datetime.now().strftime("%Y%m%d") + '_oneweek.csv'
-	if (NN==False):
-		consolidatedata(data,file)
-	else:
-		consolidatedataNN(data,file)
-  # 5 day data
-	data = input_data['oneMonth']	
-	file = outputfile + datetime.now().strftime("%Y%m%d") + '_onemonth.csv'
-	if (NN==False):
-		consolidatedata(data,file)
-	else:
-		consolidatedataNN(data,file)
-	# year to date data
-	data = input_data['yearToDate']	
-	file = outputfile + datetime.now().strftime("%Y%m%d") + '_yearToDate.csv'
-	if (NN==False):
-		buy_tickers = consolidatedata(data,file)
-	else:
-		buy_tickers = consolidatedataNN(data,file)
-
 	#Read a list of tickers to track
 	print('Tracking list: ')
 	text_file = open('tracking_tickers', "r")
@@ -199,11 +198,51 @@ def processdailydata(inputdata, outputfile, NN = False):
 			bRead = False
 			text_file.close()
 
-	#CWrite tracker data
-	tracker_file = outputfile + VALUE_TRACKER
+	#process today data
+	data = input_data['today']	
+	file = outputfile + datetime.now().strftime("%Y%m%d") + '_today.csv'
+	if (NN==False):
+		buy_tickers=consolidatedata(data,file)
+	else:
+		buy_tickers=consolidatedataNN(data,file)
+	# 5 day data
+	data = input_data['oneWeek']	
+	file = outputfile + datetime.now().strftime("%Y%m%d") + '_oneweek.csv'
+	if (NN==False):
+		buy_tickers=consolidatedata(data,file)
+	else:
+		buy_tickers=consolidatedataNN(data,file)
+    #20 day data
+	data = input_data['oneMonth']	
+	file = outputfile + datetime.now().strftime("%Y%m%d") + '_onemonth.csv'
+	if (NN==False):
+		buy_tickers=consolidatedata(data,file)
+	else:
+		buy_tickers=consolidatedataNN(data,file)
+
+	#Write tracker data
+	tracker_file = outputfile + VALUE_TRACKER + '_month.csv'
 	plot_tk = writetrackingdata(tracker_file,buy_tickers,track_tic,'value', header)
 
-	tracker_file = outputfile + VOLUME_TRACKER
+	tracker_file = outputfile + VOLUME_TRACKER + '_month.csv'
+	writetrackingdata(tracker_file,buy_tickers,track_tic,'volume', header)
+	#plot bar chart
+	sorted_tks = sorted(plot_tk, key=operator.attrgetter('NetValue'), reverse=True) 
+	plotbarchart(sorted_tks,'value', outputfile + 'VALUE - LastMonth')
+
+	# year to date data
+	data = input_data['yearToDate']	
+	file = outputfile + datetime.now().strftime("%Y%m%d") + '_yearToDate.csv'
+	if (NN==False):
+		buy_tickers = consolidatedata(data,file)
+	else:
+		buy_tickers = consolidatedataNN(data,file)
+
+	#Write tracker data
+	tracker_file = outputfile + VALUE_TRACKER + '.csv'
+	plot_tk = writetrackingdata(tracker_file,buy_tickers,track_tic,'value', header)
+
+	tracker_file = outputfile + VOLUME_TRACKER + '.csv'
 	writetrackingdata(tracker_file,buy_tickers,track_tic,'volume', header)
 
 	#back up daily data
@@ -213,7 +252,8 @@ def processdailydata(inputdata, outputfile, NN = False):
 
 	#plot bar chart
 	sorted_tks = sorted(plot_tk, key=operator.attrgetter('NetValue'), reverse=True) 
-	plotbarchart(sorted_tks,'value', outputfile + 'VALUE')
+	plotbarchart(sorted_tks,'value', outputfile + 'VALUE - yearToDate')
+
 
 def consolidatedataNN(data,outputfile):
 	with open(outputfile, 'w') as f:
@@ -310,53 +350,146 @@ def writetrackingdata(tracker_file, tickers,track_tic, datatype = 'value', heade
 			print('Write tracking data to ' + tracker_file)
 		return plot_tk
 
+def exploresingleticker(inputdata, ticker, buy_or_sell = True, timeRange = 'm'):
+	f = open(inputdata)
+	d = json.load(f)
+	input_data = d["items"][0]
+	if (timeRange == 'd'):
+		data = input_data['today']
+	elif (timeRange == 'w'):
+		data =input_data['oneWeek']
+	elif (timeRange == 'y'):
+		data =input_data['yearToDate']
+	else:
+		data =input_data['oneMonth']
+
+	if (buy_or_sell == True):
+		buy = data['buy']
+	else:
+		buy = data['sell']
+	tickers = []
+	for buy_element in buy:
+		tickers.append(exploretradeticker(buy_element))
+	for tk in tickers:
+		if (tk.name == ticker):
+			return tk.NetValue;
+	return 0
+
 #####EXECUTION####
+arg_count=0
+op_mode = 'fetch'
+plot_single_tk = 'XXX'
+for arg in sys.argv:
+	print(arg)
+	if (arg_count == 1):
+		if (arg == 'plot'):
+				op_mode = 'plot'
+	if (arg_count == 2):
+		if (arg.isnumeric() and int(arg) < 30 and int(arg) > 5):
+			NO_OF_PLOTTING_TICKERS = int(arg)
+		else:
+			plot_single_tk = arg.upper()
+	if (arg_count == 3):
+		plot_single_tk = arg.upper()
+	arg_count = arg_count+1
+if (op_mode == 'fetch'):
+	with open('input_data.json','w') as f:
+		dat = os.popen("curl 'https://fiin-market.ssi.com.vn/MoneyFlow/GetProprietaryV2?language=vi&ComGroupCode=VNINDEX&time=1632236211813' \
+	  -H 'Connection: keep-alive' \
+	  -H 'Pragma: no-cache' \
+	  -H 'Cache-Control: no-cache' \
+	  -H 'sec-ch-ua: \"Google Chrome\";v=\"93\", \" Not;A Brand\";v=\"99\", \"Chromium\";v=\"93\"' \
+	  -H 'sec-ch-ua-mobile: ?0' \
+	  -H 'X-Fiin-Key: KEY' \
+	  -H 'Content-Type: application/json' \
+	  -H 'Accept: application/json' \
+	  -H 'X-Fiin-User-ID: ID' \
+	  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.82 Safari/537.36' \
+	  -H 'X-Fiin-Seed: SEED' \
+	  -H 'sec-ch-ua-platform: \"macOS\"' \
+	  -H 'Origin: https://iboard.ssi.com.vn' \
+	  -H 'Sec-Fetch-Site: same-site' \
+	  -H 'Sec-Fetch-Mode: cors' \
+	  -H 'Sec-Fetch-Dest: empty' \
+	  -H 'Referer: https://iboard.ssi.com.vn/' \
+	  -H 'Accept-Language: en-US,en;q=0.9' \
+	  --compressed").read()
+		f.write(dat)
 
-dat = os.popen("curl 'https://fiin-market.ssi.com.vn/MoneyFlow/GetProprietaryV2?language=vi&ComGroupCode=VNINDEX&time=1632236211813' \
-  -H 'Connection: keep-alive' \
-  -H 'Pragma: no-cache' \
-  -H 'Cache-Control: no-cache' \
-  -H 'sec-ch-ua: \"Google Chrome\";v=\"93\", \" Not;A Brand\";v=\"99\", \"Chromium\";v=\"93\"' \
-  -H 'sec-ch-ua-mobile: ?0' \
-  -H 'X-Fiin-Key: KEY' \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json' \
-  -H 'X-Fiin-User-ID: ID' \
-  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.82 Safari/537.36' \
-  -H 'X-Fiin-Seed: SEED' \
-  -H 'sec-ch-ua-platform: \"macOS\"' \
-  -H 'Origin: https://iboard.ssi.com.vn' \
-  -H 'Sec-Fetch-Site: same-site' \
-  -H 'Sec-Fetch-Mode: cors' \
-  -H 'Sec-Fetch-Dest: empty' \
-  -H 'Referer: https://iboard.ssi.com.vn/' \
-  -H 'Accept-Language: en-US,en;q=0.9' \
-  --compressed").read()
-with open('input_data.json','w') as f:
-	f.write(dat)
+	with open('input_data_NN.json','w') as f:
+		dat = os.popen("curl 'https://fiin-market.ssi.com.vn/MoneyFlow/GetForeign?language=vi&ComGroupCode=VNINDEX&time=1632450311261' \
+	  -H 'Connection: keep-alive' \
+	  -H 'sec-ch-ua: \"Google Chrome\";v=\"93\", \" Not;A Brand\";v=\"99\", \"Chromium\";v=\"93\"' \
+	  -H 'sec-ch-ua-mobile: ?0' \
+	  -H 'X-Fiin-Key: KEY' \
+	  -H 'Content-Type: application/json' \
+	  -H 'Accept: application/json' \
+	  -H 'X-Fiin-User-ID: ID' \
+	  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.82 Safari/537.36' \
+	  -H 'X-Fiin-Seed: SEED' \
+	  -H 'sec-ch-ua-platform: \"macOS\"' \
+	  -H 'Origin: https://iboard.ssi.com.vn' \
+	  -H 'Sec-Fetch-Site: same-site' \
+	  -H 'Sec-Fetch-Mode: cors' \
+	  -H 'Sec-Fetch-Dest: empty' \
+	  -H 'Referer: https://iboard.ssi.com.vn/' \
+	  -H 'Accept-Language: en-GB,en-US;q=0.9,en;q=0.8' \
+  	--compressed").read()
+		f.write(dat)
 
-dat = os.popen("curl 'https://fiin-market.ssi.com.vn/MoneyFlow/GetForeign?language=vi&ComGroupCode=VNINDEX&time=1632450311261' \
-  -H 'Connection: keep-alive' \
-  -H 'sec-ch-ua: \"Google Chrome\";v=\"93\", \" Not;A Brand\";v=\"99\", \"Chromium\";v=\"93\"' \
-  -H 'sec-ch-ua-mobile: ?0' \
-  -H 'X-Fiin-Key: KEY' \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json' \
-  -H 'X-Fiin-User-ID: ID' \
-  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.82 Safari/537.36' \
-  -H 'X-Fiin-Seed: SEED' \
-  -H 'sec-ch-ua-platform: \"macOS\"' \
-  -H 'Origin: https://iboard.ssi.com.vn' \
-  -H 'Sec-Fetch-Site: same-site' \
-  -H 'Sec-Fetch-Mode: cors' \
-  -H 'Sec-Fetch-Dest: empty' \
-  -H 'Referer: https://iboard.ssi.com.vn/' \
-  -H 'Accept-Language: en-GB,en-US;q=0.9,en;q=0.8' \
-  --compressed").read()
-with open('input_data_NN.json','w') as f:
-	f.write(dat)
+	#CONSOLIDATE DATA
+	processdailydata('input_data.json',DATA_FOLDER, False)
+	processdailydata('input_data_NN.json',DATA_FOLDER_NN, True)
 
-##CONSOLIDATE DATA
-processdailydata('input_data.json',DATA_FOLDER, False)
-processdailydata('input_data_NN.json',DATA_FOLDER_NN, True)
+##Plot Tracking tickers
+if (op_mode=='plot'):
+	print('START PLOTTING')
 
+	#looping through the data to find the tickers information
+	if (plot_single_tk!='XXX'):
+		path = os.getcwd() + '/consolidated_data/*.json'
+		files = glob.glob(path)
+		sorted_by_mtime_ascending = sorted(files, key=lambda t: os.stat(t).st_mtime)
+		tickers = []
+		for data_path in sorted_by_mtime_ascending:
+			tk_date = data_path[data_path.find('.json')-8:data_path.find('.json')]
+			tk_val = exploresingleticker(data_path,plot_single_tk,True,'y')
+			tickers.append(ticker_info(tk_date,0,0,0,float(tk_val)))
+		plotbarchart(tickers,'value',plot_single_tk)
+
+	#Read tracking data
+	tracker_file = DATA_FOLDER + VALUE_TRACKER + '.csv'
+	data = list(csv.reader(open(tracker_file)))
+ 
+	#Plot year to date data
+	tickers=[]
+	for i in range(min(len(data[0])-1,NO_OF_PLOTTING_TICKERS)):
+		last_row_idx = len(data)-1
+		ticker = ticker_info(data[0][i+1],0,0,0,float(data[last_row_idx][i+1]))
+		tickers.append(ticker)
+		last_date = data[last_row_idx][0]
+	sorted_tickers = sorted(tickers, key=operator.attrgetter('NetValue'), reverse=False) 
+	plotbarchart(sorted_tickers,'value','Value Year To Date ' + last_date)
+
+	#plot each tiker data
+	for i in range(len(data[0])):
+		if (i>0 and i <= len(data[0])):
+			if (plot_single_tk == data[0][i]):
+				tk_title = str(data[0][i])
+				tickers = []
+				for j in range(len(data)):
+					if (j > 0):
+						tk_date = data[j][0]
+						if (i < len(data[j])):
+							tk_val = data[j][i]
+						else:
+							tk_val = 0.0
+						ticker = ticker_info(tk_date,0,0,0,float(tk_val))
+						tickers.append(ticker)
+				#plotbarchart(tickers,'value',tk_title)
+	#plot yeartodate data
+	
+
+
+
+	
