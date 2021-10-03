@@ -18,4 +18,5 @@ v1.3
 - auto update tracker header when the tracking list changes
 - collect foreign data
 v1.4 
- -plot historic data of tickers using 'plot' argument
+- plot historic data of tickers using 'plot' argument
+
